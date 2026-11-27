@@ -33,17 +33,37 @@ RUN cargo install --locked cargo-zigbuild --version "${CARGO_ZIGBUILD_VERSION}" 
  && rm -rf /usr/local/cargo/registry
 RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
-# ---- build ----
-FROM toolchain AS build
+# ---- dependencies: built from the manifests alone, so that a change of the code finds them in the cache ----
+FROM toolchain AS deps
 # The tests move a volume between two agents with a real rsync.
 RUN apt-get update && apt-get install -y --no-install-recommends rsync && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-COPY . .
-# Tests run natively on the build platform: the cross-compiled binaries cannot be executed here.
-# Declared before TARGETARCH on purpose: this layer is shared by all target platforms.
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY proto proto
+# Empty targets stand in for the code.
+RUN mkdir src tests && echo 'fn main() {}' >src/main.rs && touch src/lib.rs && echo 'fn main() {}' >tests/init.rs
 # SKIP_TESTS=1 is for CI, where the tests have already passed before the image is built.
 ARG SKIP_TESTS=
-RUN if [ -z "$SKIP_TESTS" ]; then cargo test --locked; fi && rm -rf target
+RUN if [ -z "$SKIP_TESTS" ]; then cargo test --locked --no-run; fi
+
+# ---- the code ----
+FROM scratch AS code
+COPY src /src/src
+COPY tests /src/tests
+COPY chart/files/crds /src/chart/files/crds
+
+# ---- tests: natively on the build platform, as the cross-compiled binaries cannot be executed here ----
+# Nothing in this stage depends on TARGETARCH: it runs once for all target platforms.
+FROM deps AS test
+ARG SKIP_TESTS=
+COPY --from=code /src /src
+# The code has to be newer than the empty targets, whatever times its files came with: cargo goes by them.
+RUN find src tests -type f -exec touch {} + \
+ && if [ -z "$SKIP_TESTS" ]; then cargo test --locked; fi \
+ && touch /tested
+
+# ---- build ----
+FROM deps AS build
 ARG TARGETARCH
 RUN set -eux; \
     case "$TARGETARCH" in \
@@ -51,6 +71,14 @@ RUN set -eux; \
       arm64) target=aarch64-unknown-linux-musl ;; \
       *) echo "unsupported target architecture $TARGETARCH" >&2; exit 1 ;; \
     esac; \
+    echo "$target" >/target; \
+    cargo zigbuild --locked --release --target "$target"
+COPY --from=code /src /src
+# The image is not built before the tests have passed.
+COPY --from=test /tested /tested
+RUN set -eux; \
+    target="$(cat /target)"; \
+    find src tests -type f -exec touch {} +; \
     cargo zigbuild --locked --release --target "$target"; \
     for name in local-path-csi; do \
       bin="target/$target/release/$name"; \
