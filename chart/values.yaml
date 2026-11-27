@@ -1,0 +1,137 @@
+# Image of the driver; the tag defaults to the appVersion of the chart.
+image:
+  repository: ghcr.io/lazovskiy/local-path-csi
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# CSI sidecars of the Kubernetes project.
+sidecars:
+  provisioner: registry.k8s.io/sig-storage/csi-provisioner:v6.4.0
+  attacher: registry.k8s.io/sig-storage/csi-attacher:v4.13.0
+  resizer: registry.k8s.io/sig-storage/csi-resizer:v2.3.0
+  registrar: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0
+
+# Root directory of the kubelet on the nodes.
+kubeletDir: /var/lib/kubelet
+
+# API group of LocalPathVolume and LocalPathNode: the definitions, the access rules and the driver all
+# take it from here. Choose it at install: the volumes of a running cluster are objects of the
+# group it was installed with.
+apiGroup: local-path-csi.domik.fi
+
+# Name the driver reports to the kubelet and writes into every PersistentVolume; the topology
+# keys are <driverName>/node and <driverName>/storage. Choose it at install: a PersistentVolume
+# names its driver, and nothing rewrites those.
+driverName: local-path.csi.domik.fi
+
+# Pools: directories prepared on every storage node (formatted and mounted by you). The pool
+# default has no path on purpose: the install fails until you give it the one of your nodes.
+# Helm replaces a list as a whole, --set too: with --set pools[0].path=... set pools[0].name as well.
+pools:
+  - name: default
+    # path: /mnt/local-path-csi   # the same path on every storage node
+    # quota: true                 # limit volumes by XFS project quota; needs the prjquota mount option
+    # requireMountpoint: true     # refuse a path that is not the root of a mounted filesystem
+    # overcommit: 1.0             # volume sizes may add up to the size of the filesystem times this
+
+# Project ids of volumes are allocated from this number up.
+projectIdBase: 1000000
+
+# StorageClasses to create. Every field:
+#   - name: local
+#     pool: default
+#     mobility: Pinned            # Pinned: the volume stays on its node; Floating: it follows its pod
+#     default: false              # the default StorageClass of the cluster
+#     reclaimPolicy: Delete
+#     dirMode: "0770"             # permissions of the volume directory
+#     inodesPerGiB: 0             # files and directories allowed per GiB of size; 0 is unlimited
+#     deleteGracePeriod: "0"      # keep a deleted volume in the trash of its pool this long: 30m, 24h, 7d
+storageClasses:
+  - name: local-path-pinned
+    pool: default
+    mobility: Pinned
+    default: false
+  - name: local-path-floating
+    pool: default
+    mobility: Floating
+    default: false
+
+# How volumes of a Floating StorageClass travel between the nodes. The agents talk to each other
+# directly, pod to pod, over TLS with keys of their own.
+transfer:
+  # Port of the agents; the nodes must be able to reach each other's agent pods on it.
+  port: 9754
+  # Volumes one node receives at a time; the rest wait for their turn.
+  concurrency: 1
+  # KiB per second one copy may take, counted before compression; 0 is no limit.
+  bandwidthLimitKiB: 0
+  # How the node that holds the data compresses it on its way: zstd or none.
+  compression: zstd
+  # Level of zstd, 1 to 19: higher is smaller and slower. -1 to -7 are faster than 1 and compress
+  # less - for nodes whose CPU cannot keep up with their network.
+  compressionLevel: 1
+  # How long a node keeps the copy of a volume that has moved away, in the trash of the pool: a
+  # way back, and the start of the next copy if the volume returns. 0 removes it at once.
+  keepSource: 24h
+
+# The pod webhook tells the scheduler what it cannot know about Floating volumes: a new pod
+# prefers the node that holds the data of its volumes and stays off the nodes they do not fit on.
+# Without it everything works; a pod only lands on another node more often, and its volume travels.
+webhook:
+  enabled: true
+  port: 9443
+  # Ignore: a pod is created also when the webhook does not answer.
+  failurePolicy: Ignore
+  timeoutSeconds: 5
+  # Pods of these namespaces are not shown to the webhook; the namespace of the release never is.
+  excludeNamespaces: [kube-system]
+
+# The agents share a service account, so RBAC lets each of them write the LocalPathNode and the
+# LocalPathVolumes of every node. With these ValidatingAdmissionPolicies an agent writes only what
+# belongs to its own node: one that was taken over cannot pass for another, nor have the volumes
+# of other nodes sent to itself. Needs Kubernetes 1.32 or newer.
+admissionPolicy:
+  enabled: true
+
+controller:
+  replicas: 2
+  # How long the attacher waits for one attach: a volume that follows its pod is attached only
+  # when its data has arrived on the node.
+  attachTimeout: 24h
+  # Attaches the attacher handles at a time. Each volume on its way to another node holds one
+  # until it has arrived, and the others must not wait for it.
+  attachWorkers: 100
+  # An agent reports its node every 30 seconds. A node without a report for this long is taken
+  # for a node without an agent: no new volumes and no resizes there. The controller counts from
+  # the moment it saw the report change, by its own clock.
+  agentTimeoutSeconds: 120
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  priorityClassName: system-cluster-critical
+
+agent:
+  # The agent runs only on nodes with this label: every one of them must have all the pools.
+  nodeSelector:
+    local-path-csi.domik.fi/storage: ""
+  tolerations:
+    - operator: Exists
+  resources: {}
+  priorityClassName: system-node-critical
+
+metrics:
+  # Port of /metrics and /healthz of the controller and of the agents.
+  port: 9753
+  # PodMonitor, PrometheusRule (the alerts of files/alerts.yaml) and a Grafana dashboard in a
+  # ConfigMap for the dashboard sidecar. The first two need the CRDs of prometheus-operator.
+  podMonitor:
+    enabled: false
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+  grafanaDashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"

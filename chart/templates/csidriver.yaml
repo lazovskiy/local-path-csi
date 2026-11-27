@@ -1,0 +1,15 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: {{ .Values.driverName }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  # A volume is attached to one node at a time; for a volume that follows its pod the attach is
+  # where its data moves.
+  attachRequired: true
+  podInfoOnMount: false
+  # The kubelet changes the group of the files when a pod comes with another fsGroup.
+  fsGroupPolicy: File
+  # The scheduler places a new volume only where the pool has room for it.
+  storageCapacity: true
+  volumeLifecycleModes: [Persistent]

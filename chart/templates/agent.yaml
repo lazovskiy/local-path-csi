@@ -1,0 +1,124 @@
+{{- $pluginDir := printf "%s/plugins/%s" .Values.kubeletDir .Values.driverName }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: local-path-csi-agent
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: local-path-csi
+      app.kubernetes.io/component: agent
+  template:
+    metadata:
+      labels:
+        {{- include "local-path-csi.labels" . | nindent 8 }}
+        app.kubernetes.io/component: agent
+      annotations:
+        {{- include "local-path-csi.scrape" . | nindent 8 }}
+        # The agent reads its configuration once: a change restarts it.
+        checksum/config: {{ include "local-path-csi.config" . | sha256sum }}
+    spec:
+      serviceAccountName: local-path-csi-agent
+      priorityClassName: {{ .Values.agent.priorityClassName }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.agent.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: local-path-csi
+          image: {{ include "local-path-csi.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - agent
+            - --endpoint=unix:///csi/csi.sock
+            - --config=/etc/local-path-csi/config.json
+            - --metrics-address=0.0.0.0:{{ .Values.metrics.port }}
+            - --api-group={{ .Values.apiGroup }}
+            - --driver-name={{ .Values.driverName }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+            - name: transfer
+              containerPort: {{ .Values.transfer.port }}
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            # Where the agents of other nodes fetch volumes from.
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+          # Root and privileged: the agent bind-mounts volumes into the pod directories of the
+          # kubelet (which takes Bidirectional propagation), sets quotas, and reads, writes and
+          # removes the files of any user.
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+          {{- with .Values.agent.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: plugin
+              mountPath: /csi
+            - name: config
+              mountPath: /etc/local-path-csi
+              readOnly: true
+            # The kubelet names host paths: the pod directories are mounted at their host path.
+            - name: pods
+              mountPath: {{ .Values.kubeletDir }}/pods
+              mountPropagation: Bidirectional
+            {{- range $i, $pool := .Values.pools }}
+            # What is mounted on the node under the path of a pool after the agent has started -
+            # the disk of the pool itself, mounted late or again - reaches the agent: without the
+            # propagation the agent would go on seeing the directory that was there before.
+            - name: pool-{{ $i }}
+              mountPath: {{ $pool.path }}
+              mountPropagation: HostToContainer
+            {{- end }}
+        - name: registrar
+          image: {{ .Values.sidecars.registrar }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path={{ $pluginDir }}/csi.sock
+          # Root: the registration directory of the kubelet belongs to root.
+          securityContext:
+            runAsUser: 0
+            {{- include "local-path-csi.restricted" . | nindent 12 }}
+          volumeMounts:
+            - name: plugin
+              mountPath: /csi
+            - name: registration
+              mountPath: /registration
+      volumes:
+        - name: plugin
+          hostPath:
+            path: {{ $pluginDir }}
+            type: DirectoryOrCreate
+        - name: registration
+          hostPath:
+            path: {{ .Values.kubeletDir }}/plugins_registry
+            type: Directory
+        - name: pods
+          hostPath:
+            path: {{ .Values.kubeletDir }}/pods
+            type: Directory
+        - name: config
+          configMap:
+            name: local-path-csi-agent
+        {{- range $i, $pool := .Values.pools }}
+        # Directory, not DirectoryOrCreate: a missing pool must not appear as an empty directory
+        # on the root filesystem.
+        - name: pool-{{ $i }}
+          hostPath:
+            path: {{ $pool.path }}
+            type: Directory
+        {{- end }}

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: local-path-csi
+description: CSI driver for node-local directory volumes with quotas, usage metrics and volumes that follow their pod
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+# helm push turns these into the annotations that link the chart package in ghcr to the repository.
+home: https://github.com/lazovskiy/local-path-csi
+sources:
+  - https://github.com/lazovskiy/local-path-csi

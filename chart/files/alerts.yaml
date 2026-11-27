@@ -1,0 +1,143 @@
+# Alerts of local-path-csi, a Prometheus rule file. The chart ships it as a PrometheusRule;
+# `e2e/alerts.sh` checks it with promtool.
+#
+# The controller runs in several replicas that export the same series: its metrics are
+# aggregated with max() so that one problem is one alert.
+groups:
+  - name: local-path-csi
+    rules:
+      - alert: LocalPathCsiControllerAbsent
+        expr: absent(local_path_csi_node_agent_alive)
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: No local-path-csi controller is reporting metrics.
+          description: >-
+            Without a running controller no pod with a local-path-csi volume can start: every attach
+            goes through it. Check the local-path-csi-controller Deployment.
+      - alert: LocalPathCsiVolumesWithoutAgent
+        expr: max by (node) (local_path_csi_node_volumes_without_agent) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Node {{ $labels.node }} holds {{ $value }} volume(s) and its local-path-csi agent is not reporting.
+          description: >-
+            The volumes on {{ $labels.node }} cannot be created, resized, deleted or brought to a
+            new pod until the agent is back. Check that the node is up, carries the storage label
+            of the agent DaemonSet and that the agent pod runs there.
+      - alert: LocalPathCsiVolumeLost
+        expr: max by (node, pool) (local_path_csi_volumes{phase="Lost"}) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $value }} volume(s) of pool {{ $labels.pool }} on node {{ $labels.node }} lost their directory.'
+          description: >-
+            The directory of a volume that was ready is gone from the pool. The agent does not
+            replace it with an empty one. Find the volume with `kubectl get localpathvolumes` and
+            check the disk of the pool.
+      - alert: LocalPathCsiVolumePending
+        expr: max by (node, pool) (local_path_csi_volumes{phase="Pending"}) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $value }} volume(s) of pool {{ $labels.pool }} on node {{ $labels.node }} are not ready.'
+          description: >-
+            The agent has not made the directory of a volume. The reason is in the status of the
+            volume: `kubectl get localpathvolumes -o yaml`.
+      - alert: LocalPathCsiPoolNotReady
+        expr: local_path_csi_pool_ready == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Pool {{ $labels.pool }} on node {{ $labels.node }} is {{ $labels.state }}.
+          description: >-
+            The pool failed its checks and holds no volumes: existing ones cannot be mounted or
+            changed. NotMountpoint: the disk of the pool is not mounted. NoQuota: it is mounted
+            without the prjquota option. Missing: the path does not exist.
+      - alert: LocalPathCsiPoolLowOnSpace
+        expr: local_path_csi_pool_available_bytes / local_path_csi_pool_capacity_bytes < 0.1 and local_path_csi_pool_ready == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: The filesystem of pool {{ $labels.pool }} on node {{ $labels.node }} has {{ $value | humanizePercentage }} free.
+          description: >-
+            Volumes may run out of space before they reach their sizes. This happens with an
+            overcommit ratio above 1, with a pool without quota, or when something else than
+            volumes fills the filesystem.
+      - alert: LocalPathCsiPoolAlmostAllocated
+        expr: |
+          max by (node, pool) (local_path_csi_pool_free_bytes)
+            / on (node, pool) max by (node, pool) (local_path_csi_pool_allocatable_bytes) < 0.1
+          and on (node, pool) local_path_csi_pool_ready == 1
+          and on (node) max by (node) (local_path_csi_node_agent_alive) == 1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Pool {{ $labels.pool }} on node {{ $labels.node }} has {{ $value | humanizePercentage }} left for new volumes.
+          description: >-
+            The sizes of the volumes of the pool add up to almost all it may hold. New volumes
+            and resizes will be refused on this node soon.
+      - alert: LocalPathCsiVolumeAlmostFull
+        expr: local_path_csi_volume_used_bytes / local_path_csi_volume_size_bytes > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Volume {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $value | humanizePercentage }} full.
+          description: >-
+            Writes fail with "No space left on device" when the volume reaches its size. Grow the
+            claim: the volume is resized in place.
+      - alert: LocalPathCsiVolumeInodesAlmostExhausted
+        expr: local_path_csi_volume_inodes_used / local_path_csi_volume_inodes_limit > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Volume {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} uses {{ $value | humanizePercentage }} of its files limit.
+          description: >-
+            The limit on files and directories grows with the size of the claim (inodesPerGiB of
+            the StorageClass).
+      - alert: LocalPathCsiAgentErrors
+        expr: increase(local_path_csi_agent_errors_total[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: The local-path-csi agent on node {{ $labels.node }} keeps failing to {{ $labels.operation }}.
+          description: The reason is in the log of the agent pod on {{ $labels.node }}.
+      - alert: LocalPathCsiAgentStuck
+        # A healthy agent goes over its volumes at least every 30 seconds.
+        expr: local_path_csi_agent_seconds_since_last_pass > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: The local-path-csi agent on node {{ $labels.node }} has not gone over its volumes to the end for more than 15 minutes.
+          description: >-
+            Until it does, volumes on {{ $labels.node }} are neither created nor resized nor deleted,
+            and the node still takes new ones: it reports apart from the passes. Removing a very
+            large volume takes this long as well. Otherwise look at the log of the agent pod on
+            {{ $labels.node }} and restart it.
+      - alert: LocalPathCsiVolumeNotMoving
+        # Between two failed attempts the state is Copying for a moment: the last ten minutes count.
+        expr: |
+          max by (persistentvolume, namespace, persistentvolumeclaim, source, target, state) (
+            max_over_time(local_path_csi_volume_moving{state=~"Failed|Pending"}[10m])
+          ) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Volume {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is not getting from node {{ $labels.source }} to node {{ $labels.target }} ({{ $labels.state }}).
+          description: >-
+            A pod waits for the volume on {{ $labels.target }} and does not start. Failed: the copy
+            keeps failing; the reason is in the events of the claim and in status.transfer.message
+            of LocalPathVolume {{ $labels.persistentvolume }} - the node with the data is down, the
+            volume is still mounted there, or the agents cannot reach each other on the transfer
+            port. Pending: the agent on {{ $labels.target }} has not taken the volume up.

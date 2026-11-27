@@ -1,0 +1,95 @@
+# Every push to main and every pull request: the checks. A pull request of this repository also gets
+# an image and a chart for a dev cluster, tagged with its number, and e2e while it has the label
+# run-e2e.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+# A run of a pull request replaces the one before it. Adding any other label than run-e2e starts a
+# run that does nothing: it gets a group of its own, so that it does not cancel the real one.
+concurrency:
+  group: ${{ github.event.action == 'labeled' && github.event.label.name != 'run-e2e' && format('ci-noop-{0}', github.run_id) || format('ci-{0}', github.event.pull_request.number || github.ref) }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    if: github.event.action != 'labeled' || github.event.label.name == 'run-e2e'
+    uses: ./.github/workflows/checks.yaml
+
+  # Not for forks and dependabot: their token cannot write to the registry.
+  image:
+    needs: checks
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image.yaml
+    with:
+      tags: pr${{ github.event.pull_request.number }}
+
+  chart:
+    needs: image
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/chart.yaml
+    with:
+      suffix: -pr${{ github.event.pull_request.number }}
+      app-version: pr${{ github.event.pull_request.number }}
+
+  # One comment per pull request, rewritten on every push.
+  comment:
+    needs: [image, chart]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          CHART: ${{ needs.chart.outputs.chart }}
+          VERSION: ${{ needs.chart.outputs.version }}
+        run: |
+          marker='<!-- local-path-csi-dev -->'
+          body="$marker
+          Build of $HEAD for a dev cluster:
+
+          \`\`\`sh
+          helm upgrade --install local-path-csi oci://$CHART --version $VERSION \\
+            --namespace local-path-csi --create-namespace --set image.pullPolicy=Always -f values.yaml
+          \`\`\`
+
+          Image \`$IMAGE:pr$PR\` (\`$DIGEST\`). The tag moves with every push to the pull request:
+          \`image.pullPolicy: Always\` makes a restarted pod take the new one."
+          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)"
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body" >/dev/null
+          fi
+
+  # Again on every push while the label is on.
+  e2e:
+    needs: image
+    if: contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/e2e.yaml
+    with:
+      image: ${{ needs.image.outputs.image }}@${{ needs.image.outputs.digest }}

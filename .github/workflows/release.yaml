@@ -1,0 +1,123 @@
+# A tag vX.Y.Z: the checks, an image pushed by its digest alone, e2e on it, and only then the tags of
+# the image, the chart and the GitHub release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+      latest: ${{ steps.verify.outputs.latest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: versions and branch
+        id: verify
+        run: |
+          tag="$GITHUB_REF_NAME"
+          failed=0
+          fail() { echo "::error::$*"; failed=1; }
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$tag is not vX.Y.Z"; exit 1; }
+          version="${tag#v}"
+          cargo="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "local-path-csi") | .version')"
+          [ "$cargo" = "$version" ] || fail "Cargo.toml has version $cargo, the tag is $tag"
+          chart="$(yq '.version' chart/Chart.yaml)"
+          [ "$chart" = "$version" ] || fail "chart/Chart.yaml has version $chart, the tag is $tag"
+          app="$(yq '.appVersion' chart/Chart.yaml)"
+          [ "$app" = "$version" ] || fail "chart/Chart.yaml has appVersion $app, the tag is $tag"
+          git branch --remotes --contains "$GITHUB_SHA" --format='%(refname:short)' | grep -qE '^origin/(main|release-.+)$' \
+            || fail "$tag is on a commit that is neither in main nor in a release-* branch"
+          [ "$failed" = 0 ] || exit 1
+          # latest is the highest version, so that a patch of an older line does not take it back.
+          newest="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "latest=$([ "$newest" = "$tag" ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+
+  checks:
+    needs: verify
+    uses: ./.github/workflows/checks.yaml
+
+  image:
+    needs: checks
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image.yaml
+
+  e2e:
+    needs: image
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/e2e.yaml
+    with:
+      image: ${{ needs.image.outputs.image }}@${{ needs.image.outputs.digest }}
+
+  promote:
+    needs: [verify, image, e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: tag the image
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          LATEST: ${{ needs.verify.outputs.latest }}
+        run: |
+          set -- --tag "$IMAGE:$VERSION"
+          [ "$LATEST" != true ] || set -- "$@" --tag "$IMAGE:latest"
+          docker buildx imagetools create "$@" "$IMAGE@$DIGEST"
+
+  chart:
+    needs: promote
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/chart.yaml
+
+  github-release:
+    needs: [verify, image, chart]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          CHART: ${{ needs.chart.outputs.chart }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          LATEST: ${{ needs.verify.outputs.latest }}
+        run: |
+          notes="\`\`\`sh
+          helm install local-path-csi oci://$CHART --version $VERSION \\
+            --namespace local-path-csi --create-namespace -f values.yaml
+          \`\`\`
+
+          Image \`$IMAGE:$VERSION\` (\`$DIGEST\`), linux/amd64 and linux/arm64."
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes "$notes" --generate-notes --latest="$LATEST"

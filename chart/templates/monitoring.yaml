@@ -1,0 +1,44 @@
+{{- $operator := .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
+{{- if and .Values.metrics.podMonitor.enabled $operator }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: local-path-csi
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "local-path-csi.labels" . | nindent 4 }}
+    {{- with .Values.metrics.podMonitor.labels }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: local-path-csi
+  podMetricsEndpoints:
+    - port: metrics
+{{- end }}
+{{- if and .Values.metrics.prometheusRule.enabled $operator }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: local-path-csi
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "local-path-csi.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  {{- /* The rule file is used as it is: its {{ }} are alert templates, not helm ones. */}}
+  {{- .Files.Get "files/alerts.yaml" | fromYaml | toYaml | nindent 2 }}
+{{- end }}
+{{- if .Values.metrics.grafanaDashboard.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-csi-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "local-path-csi.labels" . | nindent 4 }}
+    {{- with .Values.metrics.grafanaDashboard.labels }}{{ toYaml . | nindent 4 }}{{ end }}
+data:
+  local-path-csi.json: {{ .Files.Get "files/dashboard.json" | quote }}
+{{- end }}

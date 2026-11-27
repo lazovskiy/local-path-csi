@@ -1,0 +1,151 @@
+{
+  "apiVersion": "apiextensions.k8s.io/v1",
+  "kind": "CustomResourceDefinition",
+  "metadata": {
+    "annotations": {
+      "helm.sh/resource-policy": "keep"
+    },
+    "name": "localpathnodes.local-path-csi.domik.fi"
+  },
+  "spec": {
+    "group": "local-path-csi.domik.fi",
+    "names": {
+      "kind": "LocalPathNode",
+      "plural": "localpathnodes",
+      "shortNames": [
+        "lpn"
+      ],
+      "singular": "localpathnode"
+    },
+    "scope": "Cluster",
+    "versions": [
+      {
+        "additionalPrinterColumns": [
+          {
+            "jsonPath": ".status.pools[*].name",
+            "name": "Pools",
+            "type": "string"
+          },
+          {
+            "jsonPath": ".status.pools[*].state",
+            "name": "State",
+            "type": "string"
+          },
+          {
+            "jsonPath": ".status.pools[*].allocatableBytes",
+            "name": "Allocatable",
+            "type": "string"
+          },
+          {
+            "jsonPath": ".status.reportedAt",
+            "name": "Reported",
+            "type": "date"
+          }
+        ],
+        "name": "v1alpha1",
+        "schema": {
+          "openAPIV3Schema": {
+            "description": "Storage of one node, reported by its agent. Named after the node.",
+            "properties": {
+              "spec": {
+                "description": "Storage of one node, reported by its agent. Named after the node.",
+                "type": "object"
+              },
+              "status": {
+                "nullable": true,
+                "properties": {
+                  "pools": {
+                    "default": [],
+                    "items": {
+                      "properties": {
+                        "allocatableBytes": {
+                          "description": "What volume sizes may add up to: the size of the filesystem times the overcommit ratio.",
+                          "format": "uint64",
+                          "minimum": 0.0,
+                          "type": "integer"
+                        },
+                        "availableBytes": {
+                          "description": "Free space of the filesystem right now.",
+                          "format": "uint64",
+                          "minimum": 0.0,
+                          "type": "integer"
+                        },
+                        "capacityBytes": {
+                          "description": "Size of the filesystem.",
+                          "format": "uint64",
+                          "minimum": 0.0,
+                          "type": "integer"
+                        },
+                        "fsType": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "path": {
+                          "type": "string"
+                        },
+                        "quota": {
+                          "description": "Volumes of the pool are limited by project quota.",
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "enum": [
+                            "Ready",
+                            "Missing",
+                            "NotMountpoint",
+                            "NoQuota"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "allocatableBytes",
+                        "availableBytes",
+                        "capacityBytes",
+                        "name",
+                        "path",
+                        "quota",
+                        "state"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "reportedAt": {
+                    "description": "When the agent wrote this report, RFC 3339. The controller places nothing on a node whose\nreport is old: its agent is not running.",
+                    "format": "date-time",
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "transferAddress": {
+                    "description": "Where the agent serves volumes to the agents of other nodes, `host:port`.",
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "transferCertificate": {
+                    "description": "Certificate of the agent, PEM: the agents of two nodes recognise each other by what\ntheir LocalPathNodes say.",
+                    "nullable": true,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "spec"
+            ],
+            "title": "LocalPathNode",
+            "type": "object"
+          }
+        },
+        "served": true,
+        "storage": true,
+        "subresources": {
+          "status": {}
+        }
+      }
+    ]
+  }
+}

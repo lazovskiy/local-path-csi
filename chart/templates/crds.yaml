@@ -1,0 +1,13 @@
+{{- /*
+The definitions in files/crds/ are written by `local-path-csi crds` for the default API group; here
+they take the group of the release. They are templates and not files of crds/, which helm
+installs as they are. Each carries helm.sh/resource-policy: keep, so an uninstall leaves the
+definitions and the volumes they describe.
+*/ -}}
+{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+{{- /* <plural>.<group>.yaml */ -}}
+{{- $file := base $path | trimSuffix ".yaml" }}
+{{- $group := trimPrefix (printf "%s." (splitList "." $file | first)) $file }}
+---
+{{ $.Files.Get $path | replace $group $.Values.apiGroup }}
+{{- end }}

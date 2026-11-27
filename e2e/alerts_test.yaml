@@ -1,0 +1,208 @@
+# Unit tests of chart/files/alerts.yaml, run by e2e/alerts.sh with promtool.
+rule_files:
+  - /rules/alerts.yaml
+evaluation_interval: 1m
+
+tests:
+  # A node loses its agent. Two controller replicas export the same series: one alert, and only
+  # after five minutes.
+  - interval: 1m
+    input_series:
+      - series: 'local_path_csi_node_volumes_without_agent{node="a", instance="controller-1"}'
+        values: '0x4 3x20'
+      - series: 'local_path_csi_node_volumes_without_agent{node="a", instance="controller-2"}'
+        values: '0x4 3x20'
+      - series: 'local_path_csi_node_volumes_without_agent{node="b", instance="controller-1"}'
+        values: '0x24'
+      - series: 'local_path_csi_node_agent_alive{node="a", instance="controller-1"}'
+        values: '1x4 0x20'
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="LocalPathCsiVolumesWithoutAgent", alertstate="firing"})
+        eval_time: 8m
+        exp_samples: []
+      - expr: ALERTS{alertname="LocalPathCsiVolumesWithoutAgent", alertstate="firing"}
+        eval_time: 11m
+        exp_samples:
+          - labels: 'ALERTS{alertname="LocalPathCsiVolumesWithoutAgent", alertstate="firing", node="a", severity="critical"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: LocalPathCsiVolumesWithoutAgent
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              node: a
+            exp_annotations:
+              summary: Node a holds 3 volume(s) and its local-path-csi agent is not reporting.
+              description: >-
+                The volumes on a cannot be created, resized, deleted or brought to a
+                new pod until the agent is back. Check that the node is up, carries the storage label
+                of the agent DaemonSet and that the agent pod runs there.
+
+  # A volume at 95% of its size fires after fifteen minutes, one at 85% does not.
+  - interval: 1m
+    input_series:
+      - series: 'local_path_csi_volume_used_bytes{node="a", pool="default", persistentvolume="pvc-1", namespace="infra", persistentvolumeclaim="data"}'
+        values: '95x30'
+      - series: 'local_path_csi_volume_size_bytes{node="a", pool="default", persistentvolume="pvc-1", namespace="infra", persistentvolumeclaim="data"}'
+        values: '100x30'
+      - series: 'local_path_csi_volume_used_bytes{node="a", pool="default", persistentvolume="pvc-2", namespace="infra", persistentvolumeclaim="logs"}'
+        values: '85x30'
+      - series: 'local_path_csi_volume_size_bytes{node="a", pool="default", persistentvolume="pvc-2", namespace="infra", persistentvolumeclaim="logs"}'
+        values: '100x30'
+      - series: 'local_path_csi_node_agent_alive{node="a"}'
+        values: '1x30'
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="LocalPathCsiVolumeAlmostFull", alertstate="firing"})
+        eval_time: 14m
+        exp_samples: []
+      - expr: ALERTS{alertname="LocalPathCsiVolumeAlmostFull", alertstate="firing"}
+        eval_time: 16m
+        exp_samples:
+          - labels: 'ALERTS{alertname="LocalPathCsiVolumeAlmostFull", alertstate="firing", severity="warning", node="a", pool="default", persistentvolume="pvc-1", namespace="infra", persistentvolumeclaim="data"}'
+            value: 1
+
+  # A pool that failed its checks, and a volume that lost its directory.
+  - interval: 1m
+    input_series:
+      - series: 'local_path_csi_pool_ready{node="a", pool="default", state="NoQuota"}'
+        values: '0x10'
+      - series: 'local_path_csi_pool_ready{node="b", pool="default", state="Ready"}'
+        values: '1x10'
+      - series: 'local_path_csi_volumes{node="b", pool="default", mobility="Pinned", phase="Lost", instance="controller-1"}'
+        values: '1x10'
+      - series: 'local_path_csi_volumes{node="b", pool="default", mobility="Pinned", phase="Lost", instance="controller-2"}'
+        values: '1x10'
+      - series: 'local_path_csi_volumes{node="b", pool="default", mobility="Pinned", phase="Ready", instance="controller-1"}'
+        values: '7x10'
+      - series: 'local_path_csi_node_agent_alive{node="a"}'
+        values: '1x10'
+    promql_expr_test:
+      - expr: ALERTS{alertname="LocalPathCsiPoolNotReady", alertstate="firing"}
+        eval_time: 6m
+        exp_samples:
+          - labels: 'ALERTS{alertname="LocalPathCsiPoolNotReady", alertstate="firing", severity="critical", node="a", pool="default", state="NoQuota"}'
+            value: 1
+      - expr: ALERTS{alertname="LocalPathCsiVolumeLost", alertstate="firing"}
+        eval_time: 1m
+        exp_samples:
+          - labels: 'ALERTS{alertname="LocalPathCsiVolumeLost", alertstate="firing", severity="critical", node="b", pool="default"}'
+            value: 1
+
+  # A pool with 5% left for new volumes fires. A pool whose agent is silent reports 0 free: that
+  # is the other alert, not this one.
+  - interval: 1m
+    input_series:
+      - series: 'local_path_csi_pool_free_bytes{node="a", pool="default", instance="controller-1"}'
+        values: '5x70'
+      - series: 'local_path_csi_pool_allocatable_bytes{node="a", pool="default"}'
+        values: '100x70'
+      - series: 'local_path_csi_pool_ready{node="a", pool="default", state="Ready"}'
+        values: '1x70'
+      - series: 'local_path_csi_node_agent_alive{node="a", instance="controller-1"}'
+        values: '1x70'
+      - series: 'local_path_csi_pool_free_bytes{node="b", pool="default", instance="controller-1"}'
+        values: '0x70'
+      - series: 'local_path_csi_pool_allocatable_bytes{node="b", pool="default"}'
+        values: '100x70'
+      - series: 'local_path_csi_pool_ready{node="b", pool="default", state="Ready"}'
+        values: '1x70'
+      - series: 'local_path_csi_node_agent_alive{node="b", instance="controller-1"}'
+        values: '0x70'
+    promql_expr_test:
+      - expr: ALERTS{alertname="LocalPathCsiPoolAlmostAllocated", alertstate="firing"}
+        eval_time: 61m
+        exp_samples:
+          - labels: 'ALERTS{alertname="LocalPathCsiPoolAlmostAllocated", alertstate="firing", severity="warning", node="a", pool="default"}'
+            value: 1
+
+  # No controller metrics at all.
+  - interval: 1m
+    input_series:
+      - series: 'local_path_csi_pool_ready{node="a", pool="default", state="Ready"}'
+        values: '1x20'
+    promql_expr_test:
+      - expr: ALERTS{alertname="LocalPathCsiControllerAbsent", alertstate="firing"}
+        eval_time: 11m
+        exp_samples:
+          - labels: 'ALERTS{alertname="LocalPathCsiControllerAbsent", alertstate="firing", severity="critical"}'
+            value: 1
+
+  # A copy that keeps failing: between the attempts the receiving node reports Copying, so the
+  # Failed series comes and goes. A volume that failed once and arrived raises nothing, and
+  # neither does a copy that simply takes long.
+  - interval: 1m
+    input_series:
+      - series: 'local_path_csi_volume_moving{persistentvolume="pv-1", namespace="apps", persistentvolumeclaim="data", source="a", target="b", state="Failed", instance="controller-1"}'
+        values: '1 _ _ 1 _ 1 _ _ 1 _ 1 _ _ 1 _ 1 _ _ 1 _ 1 _ _ 1 _ 1'
+      - series: 'local_path_csi_volume_moving{persistentvolume="pv-2", namespace="apps", persistentvolumeclaim="other", source="a", target="b", state="Failed", instance="controller-1"}'
+        values: '1 _x25'
+      - series: 'local_path_csi_volume_moving{persistentvolume="pv-3", namespace="apps", persistentvolumeclaim="slow", source="a", target="b", state="Copying", instance="controller-1"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: LocalPathCsiVolumeNotMoving
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: LocalPathCsiVolumeNotMoving
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              persistentvolume: pv-1
+              namespace: apps
+              persistentvolumeclaim: data
+              source: a
+              target: b
+              state: Failed
+            exp_annotations:
+              summary: Volume apps/data is not getting from node a to node b (Failed).
+              description: >-
+                A pod waits for the volume on b and does not start. Failed: the copy
+                keeps failing; the reason is in the events of the claim and in status.transfer.message
+                of LocalPathVolume pv-1 - the node with the data is down, the
+                volume is still mounted there, or the agents cannot reach each other on the transfer
+                port. Pending: the agent on b has not taken the volume up.
+
+  # The node a volume was sent to never takes it up.
+  - interval: 1m
+    input_series:
+      - series: 'local_path_csi_volume_moving{persistentvolume="pv-1", namespace="apps", persistentvolumeclaim="data", source="a", target="b", state="Pending", instance="controller-1"}'
+        values: '1x25'
+      - series: 'local_path_csi_volume_moving{persistentvolume="pv-1", namespace="apps", persistentvolumeclaim="data", source="a", target="b", state="Pending", instance="controller-2"}'
+        values: '1x25'
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="LocalPathCsiVolumeNotMoving", alertstate="firing"})
+        eval_time: 10m
+        exp_samples: []
+      - expr: count(ALERTS{alertname="LocalPathCsiVolumeNotMoving", alertstate="firing", state="Pending"})
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+
+  # An agent whose pass does not end: the seconds since the last one grow past fifteen minutes.
+  # The agent of the other node goes over its volumes every 30 seconds.
+  - interval: 1m
+    input_series:
+      - series: 'local_path_csi_agent_seconds_since_last_pass{node="a"}'
+        values: '20x4 60+60x25'
+      - series: 'local_path_csi_agent_seconds_since_last_pass{node="b"}'
+        values: '20x30'
+    alert_rule_test:
+      # The value passes 900 seconds at the 20th minute; the alert waits five more.
+      - eval_time: 23m
+        alertname: LocalPathCsiAgentStuck
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: LocalPathCsiAgentStuck
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              node: a
+            exp_annotations:
+              summary: The local-path-csi agent on node a has not gone over its volumes to the end for more than 15 minutes.
+              description: >-
+                Until it does, volumes on a are neither created nor resized nor deleted,
+                and the node still takes new ones: it reports apart from the passes. Removing a very
+                large volume takes this long as well. Otherwise look at the log of the agent pod on
+                a and restart it.

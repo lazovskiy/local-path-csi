@@ -1,0 +1,118 @@
+{{- if .Values.admissionPolicy.enabled }}
+{{- $agent := printf "system:serviceaccount:%s:local-path-csi-agent" .Release.Namespace }}
+{{- /* The mark of a volume an agent has brought back from a directory, and the annotation an
+       administrator approves such a volume with. */ -}}
+{{- $mark := printf "%s/restore-pv" .Values.apiGroup }}
+{{- $approval := printf "%s/restore-approved" .Values.apiGroup }}
+{{- /* The node of the pod a service account token belongs to: the API server puts it there. */ -}}
+{{- $node := "has(request.userInfo.extra) && 'authentication.kubernetes.io/node-name' in request.userInfo.extra ? request.userInfo.extra['authentication.kubernetes.io/node-name'][0] : ''" }}
+# RBAC cannot tell one agent from another: they share a service account. These policies can - the
+# token of an agent names the node of its pod - and keep an agent to what belongs to its node. An
+# agent that was taken over can then neither pass for the agent of another node nor send the
+# volumes of other nodes to itself.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: local-path-csi-agent-localpathnodes
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [{{ .Values.apiGroup }}]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [localpathnodes, localpathnodes/status]
+  matchConditions:
+    - name: agent
+      expression: request.userInfo.username == {{ $agent | squote }}
+  variables:
+    - name: node
+      expression: {{ $node | quote }}
+  validations:
+    # A LocalPathNode carries the address and the certificate the other agents trust.
+    - expression: variables.node != '' && object.metadata.name == variables.node
+      messageExpression: >-
+        'the agent of node "' + variables.node + '" writes the LocalPathNode of its own node only'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: local-path-csi-agent-localpathnodes
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  policyName: local-path-csi-agent-localpathnodes
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: local-path-csi-agent-localpathvolumes
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [{{ .Values.apiGroup }}]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [localpathvolumes, localpathvolumes/status]
+  matchConditions:
+    - name: agent
+      expression: request.userInfo.username == {{ $agent | squote }}
+  variables:
+    - name: node
+      expression: {{ $node | quote }}
+    # Where the data of the volume was before this write; empty before the controller has said.
+    - name: dataNode
+      expression: "request.operation == 'UPDATE' ? oldObject.?status.?node.orValue('') : ''"
+  validations:
+    # A volume an agent brings back from a directory it found is a volume of its node.
+    - expression: request.operation != 'CREATE' || (variables.node != '' && object.spec.node == variables.node)
+      messageExpression: >-
+        'the agent of node "' + variables.node + '" creates volumes of its own node only'
+    # An agent writes to a volume that is on its node or on its way there.
+    - expression: >-
+        request.operation != 'UPDATE' || (variables.node != ''
+        && (oldObject.spec.node == variables.node || variables.dataNode == variables.node))
+      messageExpression: >-
+        'volume "' + object.metadata.name + '" is neither on node "' + variables.node + '" nor on its way there'
+    # That a directory is the volume of its name is the word of the agent that found it. Such a
+    # volume carries a mark, and no pod is given it until an administrator has approved it: an
+    # agent brings back no volume without the mark, takes the mark off none, approves none.
+    - expression: >-
+        request.operation != 'CREATE'
+        || object.metadata.?labels[?{{ $mark | squote }}].hasValue()
+      message: an agent creates a volume only as one it has brought back from a directory, with the mark of that
+    - expression: >-
+        request.operation != 'UPDATE'
+        || object.metadata.?labels[?{{ $mark | squote }}]
+        == oldObject.metadata.?labels[?{{ $mark | squote }}]
+      message: an agent neither takes the mark off a volume that was brought back nor puts it on one
+    - expression: >-
+        request.operation != 'CREATE'
+        || !object.metadata.?annotations[?{{ $approval | squote }}].hasValue()
+      message: an agent does not approve the restore of a volume it brings back
+    - expression: >-
+        request.operation != 'UPDATE'
+        || object.metadata.?annotations[?{{ $approval | squote }}]
+        == oldObject.metadata.?annotations[?{{ $approval | squote }}]
+      message: an agent does not approve the restore of a volume
+    # Where a volume has to be is for the controller to say: the node named there is given the data.
+    - expression: request.operation != 'UPDATE' || object.spec == oldObject.spec
+      message: an agent does not change the spec of a volume
+    # So is where the data is, and which node uses it.
+    - expression: >-
+        request.operation != 'UPDATE' || (object.?status.?node == oldObject.?status.?node
+        && object.?status.?attachedNode == oldObject.?status.?attachedNode)
+      message: an agent changes neither status.node nor status.attachedNode of a volume
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: local-path-csi-agent-localpathvolumes
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  policyName: local-path-csi-agent-localpathvolumes
+  validationActions: [Deny]
+{{- end }}

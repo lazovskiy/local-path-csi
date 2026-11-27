@@ -1,0 +1,178 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: local-path-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: local-path-csi-agent
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: local-path-csi-controller
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+rules:
+  # The driver itself.
+  - apiGroups: [{{ .Values.apiGroup }}]
+    resources: [localpathvolumes]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [{{ .Values.apiGroup }}]
+    resources: [localpathvolumes/status]
+    verbs: [patch]
+  - apiGroups: [{{ .Values.apiGroup }}]
+    resources: [localpathnodes]
+    verbs: [get, list, watch]
+  # Events on volumes, claims, pods and nodes.
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [create, patch]
+  {{- if .Values.webhook.enabled }}
+  # The webhook configuration is told the certificate the controller made for itself.
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations]
+    resourceNames: [local-path-csi]
+    verbs: [get, patch]
+  {{- end }}
+  # csi-provisioner, csi-attacher and csi-resizer: the rules of their upstream manifests.
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, update]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims/status]
+    verbs: [patch]
+  - apiGroups: [""]
+    resources: [pods, nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [list, watch, create, update, patch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, csinodes, volumeattributesclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [volumeattachments]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [storage.k8s.io]
+    resources: [volumeattachments/status]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: local-path-csi-controller
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: local-path-csi-controller
+subjects:
+  - kind: ServiceAccount
+    name: local-path-csi-controller
+    namespace: {{ .Release.Namespace }}
+---
+# Leader election of the sidecars and of the controller itself (the Lease local-path-csi-controller),
+# and the capacity objects the provisioner publishes (owned by the Deployment, which it finds
+# through its pod and ReplicaSet).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: local-path-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, watch, list, delete, update, create]
+  - apiGroups: [storage.k8s.io]
+    resources: [csistoragecapacities]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get]
+  {{- if .Values.webhook.enabled }}
+  # The certificate of the webhook, shared by the replicas. `create` cannot be limited to a name.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [local-path-csi-webhook]
+    verbs: [get]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: local-path-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: local-path-csi-controller
+subjects:
+  - kind: ServiceAccount
+    name: local-path-csi-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: local-path-csi-agent
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+rules:
+  # patch: the agent releases the finalizer of a volume it has removed.
+  # create: it brings back a volume whose directory is on the node while its LocalPathVolume is gone.
+  - apiGroups: [{{ .Values.apiGroup }}]
+    resources: [localpathvolumes]
+    verbs: [get, list, watch, patch, create]
+  - apiGroups: [{{ .Values.apiGroup }}]
+    resources: [localpathvolumes/status]
+    verbs: [patch]
+  # patch: a LocalPathNode made by an older agent gets its owner.
+  # get of other nodes: where to fetch a volume from, and who is asking for one.
+  # list, watch: the certificates of the agents - only they get past the handshake of a transfer.
+  - apiGroups: [{{ .Values.apiGroup }}]
+    resources: [localpathnodes]
+    verbs: [get, list, watch, create, patch]
+  - apiGroups: [{{ .Values.apiGroup }}]
+    resources: [localpathnodes/status]
+    verbs: [patch]
+  # Events on volumes, claims and nodes.
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [create, patch]
+  # The Node of the agent owns its LocalPathNode: the agent reads the uid of the Node.
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get]
+  # An event on a claim names it with its uid.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: local-path-csi-agent
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: local-path-csi-agent
+subjects:
+  - kind: ServiceAccount
+    name: local-path-csi-agent
+    namespace: {{ .Release.Namespace }}

@@ -1,0 +1,64 @@
+# Linters and tests that need no cluster. Called by ci.yaml and release.yaml.
+name: checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The toolchain of the Dockerfile.
+  RUST_TOOLCHAIN: "1.100.0"
+  HELM_VERSION: v4.3.0
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: chart
+        # The chart declares the pool "default" without a path: an install has to give one.
+        run: |
+          set -- --set 'pools[0].name=default' --set 'pools[0].path=/mnt/local-path-csi'
+          helm lint chart "$@"
+          helm template local-path-csi chart --namespace local-path-csi "$@" >/dev/null
+      - name: shellcheck
+        run: shellcheck -S warning e2e/*.sh .github/scripts/*.sh
+      - name: alerts
+        run: e2e/alerts.sh
+
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: rsync
+        # The tests carry a volume between two agents with a real rsync.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends rsync
+      - name: cargo test
+        run: cargo test --locked
+      - name: quota on XFS
+        run: e2e/xfs-quota.sh

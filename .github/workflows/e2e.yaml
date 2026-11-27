@@ -1,0 +1,54 @@
+# e2e/kind.sh against an image that is already in the registry: with the names of the chart, and
+# with other names than its defaults.
+name: e2e
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: The image to test, as repository@digest
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  kind:
+    name: kind (${{ matrix.names }} names)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - names: default
+          - names: other
+            api-group: example.com
+            driver-name: path.csi.example.com
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          version: v0.31.0
+          install_only: true
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v4.3.0
+      - name: e2e/kind.sh
+        env:
+          PREBUILT: ${{ inputs.image }}
+          DEBUG: "1"
+          API_GROUP: ${{ matrix.api-group }}
+          DRIVER_NAME: ${{ matrix.driver-name }}
+        run: e2e/kind.sh

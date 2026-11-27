@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: local-path-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: local-path-csi
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        {{- include "local-path-csi.labels" . | nindent 8 }}
+        app.kubernetes.io/component: controller
+      annotations: {{- include "local-path-csi.scrape" . | nindent 8 }}
+    spec:
+      serviceAccountName: local-path-csi-controller
+      priorityClassName: {{ .Values.controller.priorityClassName }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # One user for all containers: the sidecars connect to the socket the driver creates.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: local-path-csi
+                    app.kubernetes.io/component: controller
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: local-path-csi
+          image: {{ include "local-path-csi.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - controller
+            - --endpoint=unix:///csi/csi.sock
+            - --agent-timeout={{ .Values.controller.agentTimeoutSeconds }}
+            - --metrics-address=0.0.0.0:{{ .Values.metrics.port }}
+            - --api-group={{ .Values.apiGroup }}
+            - --driver-name={{ .Values.driverName }}
+            {{- if .Values.webhook.enabled }}
+            - --webhook-address=0.0.0.0:{{ .Values.webhook.port }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+            {{- if .Values.webhook.enabled }}
+            - name: webhook
+              containerPort: {{ .Values.webhook.port }}
+            {{- end }}
+          # The webhook is called through a Service: only a replica that is up gets the calls.
+          readinessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            periodSeconds: 5
+          securityContext: {{- include "local-path-csi.restricted" . | nindent 12 }}
+          {{- with .Values.controller.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: socket
+              mountPath: /csi
+        - name: csi-provisioner
+          image: {{ .Values.sidecars.provisioner }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --leader-election
+            - --leader-election-namespace=$(NAMESPACE)
+            - --timeout=60s
+            # The claim of a volume is recorded in its LocalPathVolume.
+            - --extra-create-metadata
+            - --enable-capacity
+            - --capacity-ownerref-level=2
+          env:
+            - name: NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          securityContext: {{- include "local-path-csi.restricted" . | nindent 12 }}
+          volumeMounts:
+            - name: socket
+              mountPath: /csi
+        - name: csi-attacher
+          image: {{ .Values.sidecars.attacher }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --leader-election
+            - --leader-election-namespace=$(NAMESPACE)
+            - --timeout={{ .Values.controller.attachTimeout }}
+            - --worker-threads={{ .Values.controller.attachWorkers }}
+            - --retry-interval-max=30s
+          env:
+            - name: NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          securityContext: {{- include "local-path-csi.restricted" . | nindent 12 }}
+          volumeMounts:
+            - name: socket
+              mountPath: /csi
+        - name: csi-resizer
+          image: {{ .Values.sidecars.resizer }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --leader-election
+            - --leader-election-namespace=$(NAMESPACE)
+            - --timeout=60s
+          env:
+            - name: NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          securityContext: {{- include "local-path-csi.restricted" . | nindent 12 }}
+          volumeMounts:
+            - name: socket
+              mountPath: /csi
+      volumes:
+        - name: socket
+          emptyDir: {}
+{{- if gt (int .Values.controller.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: local-path-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: local-path-csi
+      app.kubernetes.io/component: controller
+{{- end }}

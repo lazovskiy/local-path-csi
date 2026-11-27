@@ -1,0 +1,73 @@
+[package]
+name = "local-path-csi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "CSI driver for node-local directory volumes with quotas, usage metrics and volumes that follow their pod"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "local_path_csi"
+path = "src/lib.rs"
+
+[[bin]]
+name = "local-path-csi"
+path = "src/main.rs"
+
+# Forks: the harness of the standard tests runs them on threads, and a fork is for a process
+# with one.
+[[test]]
+name = "init"
+path = "tests/init.rs"
+harness = false
+
+[dependencies]
+tonic = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "fs", "process", "io-util"] }
+tokio-stream = { version = "0.1", default-features = false, features = ["net"] }
+kube = { version = "4.2", default-features = false, features = ["client", "runtime", "derive", "rustls-tls", "ring", "jsonpatch"] }
+k8s-openapi = { version = "0.28", default-features = false, features = ["latest"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+lexopt = "0.3"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
+json-patch = "4"
+zstd = { version = "0.13", default-features = false }
+libc = "0.2"
+thiserror = "2"
+getrandom = "0.4"
+rustix = { version = "1", features = ["fs", "mount", "process"] }
+socket2 = { version = "0.6", features = ["all"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+protox = "0.10"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = "symbols"

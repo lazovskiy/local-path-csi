@@ -1,0 +1,57 @@
+# Packages the chart and pushes it to oci://ghcr.io/<owner>/charts.
+name: chart
+
+on:
+  workflow_call:
+    inputs:
+      suffix:
+        description: Appended to the version of Chart.yaml, as "-pr12"
+        type: string
+        default: ""
+      app-version:
+        description: The appVersion, and so the default tag of the image; empty keeps that of Chart.yaml
+        type: string
+        default: ""
+    outputs:
+      chart:
+        description: Reference of the chart, without a version
+        value: ${{ jobs.publish.outputs.chart }}
+      version:
+        description: Version of the chart
+        value: ${{ jobs.publish.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      chart: ${{ steps.push.outputs.chart }}
+      version: ${{ steps.push.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v4.3.0
+      - name: push
+        id: push
+        env:
+          SUFFIX: ${{ inputs.suffix }}
+          APP_VERSION: ${{ inputs.app-version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          registry="oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+          version="$(yq '.version' chart/Chart.yaml)$SUFFIX"
+          app_version="${APP_VERSION:-$(yq '.appVersion' chart/Chart.yaml)}"
+          helm package chart --version "$version" --app-version "$app_version" --destination "$RUNNER_TEMP/chart"
+          helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GITHUB_TOKEN"
+          helm push "$RUNNER_TEMP/chart/local-path-csi-$version.tgz" "$registry"
+          echo "chart=$registry/local-path-csi" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"

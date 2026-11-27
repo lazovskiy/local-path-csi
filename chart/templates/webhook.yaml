@@ -1,0 +1,47 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-path-csi-webhook
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: local-path-csi
+    app.kubernetes.io/component: controller
+  ports:
+    - name: webhook
+      port: 443
+      targetPort: webhook
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: local-path-csi
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+webhooks:
+  - name: pods.{{ .Values.apiGroup }}
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    # clientConfig.caBundle is written by the controller: it makes the certificate itself.
+    clientConfig:
+      service:
+        name: local-path-csi-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /mutate
+        port: 443
+    rules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+        scope: Namespaced
+    # The pods of the driver itself must not wait for the driver.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: {{ append .Values.webhook.excludeNamespaces .Release.Namespace | uniq | toJson }}
+{{- end }}

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-csi-agent
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "local-path-csi.labels" . | nindent 4 }}
+data:
+  config.json: {{ include "local-path-csi.config" . | quote }}

@@ -1,0 +1,320 @@
+{
+  "apiVersion": "apiextensions.k8s.io/v1",
+  "kind": "CustomResourceDefinition",
+  "metadata": {
+    "annotations": {
+      "helm.sh/resource-policy": "keep"
+    },
+    "name": "localpathvolumes.local-path-csi.domik.fi"
+  },
+  "spec": {
+    "group": "local-path-csi.domik.fi",
+    "names": {
+      "kind": "LocalPathVolume",
+      "plural": "localpathvolumes",
+      "shortNames": [
+        "lpv"
+      ],
+      "singular": "localpathvolume"
+    },
+    "scope": "Cluster",
+    "versions": [
+      {
+        "additionalPrinterColumns": [
+          {
+            "jsonPath": ".spec.pool",
+            "name": "Pool",
+            "type": "string"
+          },
+          {
+            "jsonPath": ".status.node",
+            "name": "Node",
+            "type": "string"
+          },
+          {
+            "jsonPath": ".spec.sizeBytes",
+            "name": "Size",
+            "type": "integer"
+          },
+          {
+            "jsonPath": ".status.usedBytes",
+            "name": "Used",
+            "type": "integer"
+          },
+          {
+            "jsonPath": ".spec.mobility",
+            "name": "Mobility",
+            "type": "string"
+          },
+          {
+            "jsonPath": ".status.phase",
+            "name": "Phase",
+            "type": "string"
+          },
+          {
+            "jsonPath": ".status.attachedNode",
+            "name": "Attached",
+            "priority": 1,
+            "type": "string"
+          }
+        ],
+        "name": "v1alpha1",
+        "schema": {
+          "openAPIV3Schema": {
+            "description": "A directory in a pool on one node, named after its PersistentVolume.",
+            "properties": {
+              "spec": {
+                "description": "A volume: a directory in a pool on one node. Named after its PersistentVolume.",
+                "properties": {
+                  "accessMode": {
+                    "default": "ReadWriteOnce",
+                    "description": "Access mode of the claim a volume was created for.",
+                    "enum": [
+                      "ReadWriteOnce",
+                      "ReadWriteOncePod"
+                    ],
+                    "type": "string"
+                  },
+                  "claim": {
+                    "description": "The PersistentVolumeClaim the volume was created for.",
+                    "nullable": true,
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "namespace": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "namespace"
+                    ],
+                    "type": "object"
+                  },
+                  "deleteGraceSeconds": {
+                    "default": 0,
+                    "description": "Seconds a deleted volume is kept in the trash of its pool before its data is removed.",
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                  },
+                  "dirMode": {
+                    "description": "Permissions of the volume directory, octal, for example `0770`.",
+                    "type": "string"
+                  },
+                  "inodesPerGiB": {
+                    "default": 0,
+                    "description": "Files and directories allowed per GiB of size; zero means unlimited.",
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                  },
+                  "mobility": {
+                    "default": "Pinned",
+                    "description": "Whether a volume stays on its node or follows its pod.",
+                    "enum": [
+                      "Pinned",
+                      "Floating"
+                    ],
+                    "type": "string"
+                  },
+                  "node": {
+                    "description": "Node the volume has to be on.",
+                    "type": "string"
+                  },
+                  "pool": {
+                    "description": "Pool that holds the volume.",
+                    "type": "string"
+                  },
+                  "sizeBytes": {
+                    "description": "Size of the volume: the quota limit, or the reservation in a pool without quota.",
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                  },
+                  "storageClass": {
+                    "description": "StorageClass of the claim.",
+                    "nullable": true,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "dirMode",
+                  "node",
+                  "pool",
+                  "sizeBytes"
+                ],
+                "type": "object"
+              },
+              "status": {
+                "nullable": true,
+                "properties": {
+                  "attachedNode": {
+                    "description": "Node the volume is published to. Written by the controller only.",
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "capacityBytes": {
+                    "description": "Size the agent has applied.",
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "nullable": true,
+                    "type": "integer"
+                  },
+                  "conditions": {
+                    "description": "What is known of the volume, each condition with the generation of the volume it was\nseen at. `Ready` is written by the agent of the node that holds the data, with `phase`.",
+                    "items": {
+                      "properties": {
+                        "lastTransitionTime": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "observedGeneration": {
+                          "format": "int64",
+                          "type": "integer"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "True",
+                            "False",
+                            "Unknown"
+                          ],
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "lastTransitionTime",
+                        "message",
+                        "reason",
+                        "status",
+                        "type"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array",
+                    "x-kubernetes-list-map-keys": [
+                      "type"
+                    ],
+                    "x-kubernetes-list-type": "map"
+                  },
+                  "message": {
+                    "description": "Why the volume is not ready.",
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "moves": {
+                    "default": 0,
+                    "description": "How many times the volume has changed its node. Written by the controller when it hands\nthe volume over, and by an agent that brings a volume back from its directory.",
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                  },
+                  "node": {
+                    "description": "Node that holds the data. Written by the controller only.",
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "phase": {
+                    "enum": [
+                      "Pending",
+                      "Ready",
+                      "Lost",
+                      "Orphaned"
+                    ],
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "reportedBy": {
+                    "description": "Node whose agent wrote `phase`, `capacityBytes` and `usedBytes`.",
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "transfer": {
+                    "description": "The copy being made on the node the volume was sent to. Written by the agent of that node.",
+                    "nullable": true,
+                    "properties": {
+                      "message": {
+                        "description": "Why the copy is not being made, or why the last attempt failed.",
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "observedGeneration": {
+                        "description": "`metadata.generation` of the volume as the node read it before it went over the data for\nthe last time. Every change of where the volume has to be gives it a new generation: a\nreport about another one is about a copy made for a move that is no more.",
+                        "format": "int64",
+                        "nullable": true,
+                        "type": "integer"
+                      },
+                      "receivedBytes": {
+                        "description": "Bytes the copy occupies so far, when the pool accounts them.",
+                        "format": "uint64",
+                        "minimum": 0.0,
+                        "nullable": true,
+                        "type": "integer"
+                      },
+                      "source": {
+                        "description": "Node the data is copied from.",
+                        "type": "string"
+                      },
+                      "startedAt": {
+                        "description": "When the node started on this volume, RFC 3339.",
+                        "format": "date-time",
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "state": {
+                        "enum": [
+                          "Copying",
+                          "Queued",
+                          "Copied",
+                          "Failed"
+                        ],
+                        "type": "string"
+                      },
+                      "target": {
+                        "description": "Node that receives the copy.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "state",
+                      "target"
+                    ],
+                    "type": "object"
+                  },
+                  "usedBytes": {
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "nullable": true,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "spec"
+            ],
+            "title": "LocalPathVolume",
+            "type": "object"
+          }
+        },
+        "served": true,
+        "storage": true,
+        "subresources": {
+          "status": {}
+        }
+      }
+    ]
+  }
+}
