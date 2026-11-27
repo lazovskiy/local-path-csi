@@ -69,7 +69,7 @@ jobs:
           Build of $HEAD for a dev cluster:
 
           \`\`\`sh
-          helm upgrade --install local-path-csi oci://$CHART --version $VERSION \\
+          helm upgrade --install local-path-csi $CHART --version $VERSION \\
             --namespace local-path-csi --create-namespace --set image.pullPolicy=Always -f values.yaml
           \`\`\`
 

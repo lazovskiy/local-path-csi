@@ -114,7 +114,7 @@ jobs:
           LATEST: ${{ needs.verify.outputs.latest }}
         run: |
           notes="\`\`\`sh
-          helm install local-path-csi oci://$CHART --version $VERSION \\
+          helm install local-path-csi $CHART --version $VERSION \\
             --namespace local-path-csi --create-namespace -f values.yaml
           \`\`\`
 
