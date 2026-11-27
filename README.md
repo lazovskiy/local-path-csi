@@ -390,6 +390,10 @@ GitHub Actions, `.github/workflows/`:
   and a chart `oci://ghcr.io/lazovskiy/charts/local-path-csi` of version `X.Y.Z-prN`, whose image is
   that one; a comment in the pull request has the command to install it. Every push moves the tag
   `prN`: install with `image.pullPolicy: Always`. Closing the pull request deletes both.
+- **The layer cache** of the image builds is `ghcr.io/lazovskiy/local-path-csi:buildcache`, shared by
+  the pull requests and the releases. Only what `.dockerignore` lets in reaches the build: a change
+  anywhere else reuses the image as it is, and a change of the code rebuilds the crate, not its
+  dependencies.
 - **The label `run-e2e`** on a pull request runs `e2e/kind.sh` on its image, with the default names
   and with other ones, on every push while the label is on.
 - **A release**: set the version in `Cargo.toml` (and `Cargo.lock`, by `cargo check`) and in

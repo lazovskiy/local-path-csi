@@ -70,5 +70,7 @@ jobs:
           tags: ${{ steps.name.outputs.tags }}
           push: ${{ steps.name.outputs.tags != '' }}
           outputs: ${{ steps.name.outputs.tags == '' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.name.outputs.image) || '' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # In the registry, not in the cache of GitHub Actions: a pull request does not see what the
+          # runs of other branches and of tags put there, and so every pull request started cold.
+          cache-from: type=registry,ref=${{ steps.name.outputs.image }}:buildcache
+          cache-to: type=registry,ref=${{ steps.name.outputs.image }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true

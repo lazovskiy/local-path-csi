@@ -1,1 +1,11 @@
-target
+# Only what the build reads: anything else in the context would make the cache of the image miss on
+# every commit (.git) or every change of the CI, the docs or the chart. The CRDs are there for the
+# test that compares them with src/api.rs.
+*
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!proto/
+!src/
+!tests/
+!chart/files/crds/
