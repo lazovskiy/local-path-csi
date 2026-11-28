@@ -2,6 +2,11 @@
 {{- required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
 {{- end }}
 
+{{/* Namespace of the objects of the chart: the one of the release unless another is named. */}}
+{{- define "local-path-csi.namespace" -}}
+{{- .Values.namespaceOverride | default .Release.Namespace }}
+{{- end }}
+
 {{- define "local-path-csi.labels" -}}
 app.kubernetes.io/name: local-path-csi
 app.kubernetes.io/instance: {{ .Release.Name }}

@@ -85,6 +85,7 @@ and rules that you keep outside the chart need the new metric names.
 
 | Value | Default | Description |
 |---|---|---|
+| `namespaceOverride` | `""` | Namespace of everything the chart creates. Empty means the namespace of the release. Set it when the chart is a dependency of another chart and cannot have a namespace of its own. The chart does not create the namespace. |
 | `kubeletDir` | `/var/lib/kubelet` | Root directory of the kubelet on the nodes. |
 | `apiGroup` | `local-path-csi.domik.fi` | API group of `LocalPathVolume` and `LocalPathNode`. The CRDs, the access rules and the driver use it. See [Names](#names). |
 | `driverName` | `local-path.csi.domik.fi` | Name of the CSI driver. It is used for the `CSIDriver` object, the provisioner of the StorageClasses and the topology keys `<driverName>/node` and `<driverName>/storage`. See [Names](#names). |
@@ -155,7 +156,7 @@ Each item of `storageClasses` creates one StorageClass. The chart declares `loca
 | `webhook.port` | `9443` | Port of the webhook server in the controller. |
 | `webhook.failurePolicy` | `Ignore` | With `Ignore`, pods are created even when the webhook is down. |
 | `webhook.timeoutSeconds` | `5` | Timeout of a webhook call. |
-| `webhook.excludeNamespaces` | `[kube-system]` | Namespaces whose pods the webhook never sees. The namespace of the release is always excluded. |
+| `webhook.excludeNamespaces` | `[kube-system]` | Namespaces whose pods the webhook never sees. The namespace of the driver is always excluded. |
 | `admissionPolicy.enabled` | `true` | ValidatingAdmissionPolicies that limit each agent to its own `LocalPathNode` and to the volumes of its node, and stop it from approving a volume it has restored from a directory. Requires Kubernetes 1.32 or newer. See [Floating volumes](https://github.com/lazovskiy/local-path-csi/blob/main/docs/floating-volumes.md#security). |
 
 ### Metrics

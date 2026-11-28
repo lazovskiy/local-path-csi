@@ -1,5 +1,5 @@
 {{- if .Values.admissionPolicy.enabled }}
-{{- $agent := printf "system:serviceaccount:%s:local-path-csi-agent" .Release.Namespace }}
+{{- $agent := printf "system:serviceaccount:%s:local-path-csi-agent" (include "local-path-csi.namespace" .) }}
 {{- /* The mark of a volume an agent has brought back from a directory, and the annotation an
        administrator approves such a volume with. */ -}}
 {{- $mark := printf "%s/restore-pv" .Values.apiGroup }}

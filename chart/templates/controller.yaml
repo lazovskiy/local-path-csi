@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: local-path-csi-controller
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "local-path-csi.namespace" . }}
   labels: {{- include "local-path-csi.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.controller.replicas }}
@@ -139,7 +139,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: local-path-csi-controller
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "local-path-csi.namespace" . }}
   labels: {{- include "local-path-csi.labels" . | nindent 4 }}
 spec:
   minAvailable: 1

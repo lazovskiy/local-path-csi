@@ -51,7 +51,7 @@ was cancelled, the agent does not report the copy and goes over it again.
 ### Who drives the move
 
 The move does not depend on a running attach call. One controller replica is the leader: it holds
-the Lease `local-path-csi-controller` in the namespace of the release. The leader drives every
+the Lease `local-path-csi-controller` in the namespace of the driver. The leader drives every
 moving volume:
 
 - it hands over a volume whose copy is complete;
