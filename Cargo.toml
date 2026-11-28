@@ -1,6 +1,6 @@
 [package]
 name = "local-path-csi"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.89"
 description = "CSI driver for node-local directory volumes with quotas, usage metrics and volumes that follow their pod"

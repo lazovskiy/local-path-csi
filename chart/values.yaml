@@ -12,6 +12,11 @@ sidecars:
   resizer: registry.k8s.io/sig-storage/csi-resizer:v2.3.0
   registrar: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0
 
+# Namespace of everything the chart creates, when it is not the namespace of the release: for a
+# release that is a part of another one and cannot choose its own. The chart does not create the
+# namespace.
+namespaceOverride: ""
+
 # Root directory of the kubelet on the nodes.
 kubeletDir: /var/lib/kubelet
 
@@ -84,7 +89,7 @@ webhook:
   # Ignore: a pod is created also when the webhook does not answer.
   failurePolicy: Ignore
   timeoutSeconds: 5
-  # Pods of these namespaces are not shown to the webhook; the namespace of the release never is.
+  # Pods of these namespaces are not shown to the webhook; the namespace of the driver never is.
   excludeNamespaces: [kube-system]
 
 # The agents share a service account, so RBAC lets each of them write the LocalPathNode and the

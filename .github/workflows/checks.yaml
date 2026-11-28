@@ -39,6 +39,10 @@ jobs:
           set -- --set 'pools[0].name=default' --set 'pools[0].path=/mnt/local-path-csi'
           helm lint chart "$@"
           helm template local-path-csi chart --namespace local-path-csi "$@" >/dev/null
+          # With namespaceOverride nothing stays in the namespace of the release.
+          helm template local-path-csi chart --namespace release --set namespaceOverride=other "$@" >"$RUNNER_TEMP/rendered.yaml"
+          if grep -nw release "$RUNNER_TEMP/rendered.yaml"; then exit 1; fi
+          grep -q 'system:serviceaccount:other:local-path-csi-agent' "$RUNNER_TEMP/rendered.yaml"
       - name: shellcheck
         run: shellcheck -S warning e2e/*.sh .github/scripts/*.sh
       - name: alerts

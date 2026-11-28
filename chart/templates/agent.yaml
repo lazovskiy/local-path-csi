@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: local-path-csi-agent
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "local-path-csi.namespace" . }}
   labels: {{- include "local-path-csi.labels" . | nindent 4 }}
 spec:
   selector:
